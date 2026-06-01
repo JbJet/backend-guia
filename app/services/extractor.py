@@ -1,11 +1,12 @@
 """
 Pipeline principal de extração de Guia SADT.
 
-Fluxo:
-  1. PDF com texto?  → pdf_parser (pdfplumber)
-  2. PDF/imagem sem texto → ocr_service (pytesseract)
-  3. Confiança < threshold ou campos críticos ausentes → gemini_service (fallback)
+Fluxo atualizado:
+  1. Se a chave do Gemini estiver configurada no .env, utiliza a extração inteligente via Gemini
+     diretamente para garantir o mapeamento correto e evitar campos invertidos.
+  2. Caso contrário (sem chave ou em caso de falha), recorre aos métodos locais estruturados e de OCR.
 """
+
 from app.models.sadt import GuiaSADT
 from app.config import settings
 from app.services.pdf_parser import is_structured_pdf, extract_from_structured_pdf
@@ -28,20 +29,22 @@ def extract(file_bytes: bytes, content_type: str) -> GuiaSADT:
     Recebe os bytes do arquivo e seu MIME type.
     Retorna uma GuiaSADT com os campos extraídos e metadados de confiança.
     """
-    if not settings.gemini_api_key:
-        # Sem chave Gemini, usa somente extratores locais
-        use_gemini = False
-    else:
-        use_gemini = False # Default eh true
 
-    # 1. Tenta extração local
+    # 1. TENTA EXTRAÇÃO DIRETA VIA GEMINI SE A CHAVE EXISTIR
+    # Isso garante que a IA use a inteligência contextual do modelo estruturado
+    if settings.gemini_api_key:
+        try:
+            return extract_via_gemini(file_bytes, content_type)
+        except Exception as e:
+            # Fallback de segurança: se a API falhar por rede ou limite, tenta o local
+            print(
+                f"Erro na extração direta do Gemini, tentando extrator local: {str(e)}"
+            )
+
+    # 2. FLUXO LOCAL (Se estiver sem chave no .env ou se a API falhar)
     if content_type == "application/pdf" and is_structured_pdf(file_bytes):
         guia = extract_from_structured_pdf(file_bytes)
     else:
         guia = extract_via_ocr(file_bytes, content_type)
-
-    # 2. Fallback Gemini se necessário
-    if use_gemini and _needs_gemini_fallback(guia):
-        guia = enrich_with_gemini(guia, file_bytes, content_type)
 
     return guia

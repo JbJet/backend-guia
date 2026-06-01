@@ -3,6 +3,7 @@ Fallback via Gemini Vision API.
 Acionado quando a confiança do OCR/pdfplumber está abaixo do threshold,
 ou quando campos críticos (numero_carteira, procedimentos) não foram extraídos.
 """
+
 import json
 import base64
 import re
@@ -14,13 +15,25 @@ from io import BytesIO
 import fitz  # PyMuPDF
 
 from app.models.sadt import (
-    GuiaSADT, DadosOperadora, DadosBeneficiario,
-    DadosSolicitante, DadosExecutante, Procedimento,
+    GuiaSADT,
+    DadosOperadora,
+    DadosBeneficiario,
+    DadosSolicitante,
+    DadosExecutante,
+    Procedimento,
 )
 from app.config import settings
 
-_SYSTEM_PROMPT = """Você é um especialista em guias médicas do padrão TISS da ANS brasileira.
-Analise a imagem de uma Guia SADT e extraia os dados em formato JSON.
+# Prompt de sistema para guiar a extração de dados estruturados
+_SYSTEM_PROMPT = """Você é um especialista em auditoria médica e faturamento de guias do padrão TISS/TUSS da ANS brasileira.
+Sua tarefa é analisar a imagem de uma Guia e extrair estritamente os dados dinâmicos preenchidos, mapeando-os para a estrutura JSON exigida.
+
+REGRAS CRÍTICAS DE MAPEAMENTO PARA EVITAR ERROS CONTEXTUAIS:
+1. IDENTIFICAÇÃO DE RÓTULOS VS VALORES: Os textos fixos impressos no documento que identificam as caixas (exemplos: '10-NOME DO CONTRATADO', '11-NOME DO PROFISSIONAL SOLICITANTE', '12-CONSELHO', ou títulos de colunas) servem unicamente como guia estrutural. Você deve IGNORAR esses títulos textuais e capturar apenas os VALORES manuscritos ou digitados associados a eles.
+2. CAMPO OPERADORA (nome_operadora): Busque marcas corporativas de planos de saúde tradicionalmente localizadas no topo esquerdo do documento (ex: 'UNIMED'). Jamais preencha este campo com nomes de clínicas prestadoras ou hospitais contratados.
+3. SEPARAÇÃO NO BLOCO SOLICITANTE: Não confunda a clínica solicitante com o médico assistente.
+   - O nome da Razão Social/clínica (ex: 'Clínica Médica Nova Vida Ltda') vai para o campo 'solicitante.nome_contratado'.
+   - O nome completo da pessoa física/médico (ex: 'Dra. Mariana Silva Barros') vai única e exclusivamente para o campo 'solicitante.nome_profissional'.
 
 Retorne APENAS um JSON válido com a seguinte estrutura (omita campos não encontrados):
 {
@@ -79,8 +92,9 @@ def _pdf_first_page_as_image(pdf_bytes: bytes) -> bytes:
 
 
 def _parse_gemini_response(text: str) -> dict:
-    # Remove markdown code fences se existirem
-    clean = re.sub(r'```(?:json)?', '', text).strip().strip('`')
+    # Substituição limpa de texto para evitar confundir o analisador do VS Code
+    clean = text.replace("```json", "").replace("```", "").strip()
+    clean = clean.strip("`")
     return json.loads(clean)
 
 
@@ -142,7 +156,7 @@ def _dict_to_guia(data: dict) -> GuiaSADT:
         carater_atendimento=data.get("carater_atendimento"),
         tipo_atendimento=data.get("tipo_atendimento"),
         procedimentos=procedimentos,
-        confianca_extracao=0.85,
+        confianca_extracao=0.95,
         metodo_extracao="gemini",
         campos_pendentes=[],
     )
@@ -150,7 +164,7 @@ def _dict_to_guia(data: dict) -> GuiaSADT:
 
 def extract_via_gemini(file_bytes: bytes, content_type: str) -> GuiaSADT:
     genai.configure(api_key=settings.gemini_api_key)
-    model = genai.GenerativeModel("gemini-3.5-flash")
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
     if content_type == "application/pdf":
         image_bytes = _pdf_first_page_as_image(file_bytes)
