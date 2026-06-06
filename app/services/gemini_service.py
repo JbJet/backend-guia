@@ -93,9 +93,32 @@ def _pdf_first_page_as_image(pdf_bytes: bytes) -> bytes:
 
 def _parse_gemini_response(text: str) -> dict:
     # Substituição limpa de texto para evitar confundir o analisador do VS Code
-    clean = text.replace("```json", "").replace("```", "").strip()
-    clean = clean.strip("`")
-    return json.loads(clean)
+    clean = re.sub(r"```(?:json)?", "", text).strip().strip("`").strip()
+
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{.*\}", clean, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Detect truncation specifically
+    if clean.count("{") != clean.count("}") or clean.count("[") != clean.count("]"):
+        raise ValueError(
+            "Gemini response appears truncated (unbalanced braces). "
+            "Increase max_output_tokens."
+        )
+
+    import logging
+    logging.getLogger(__name__).error(
+        "Gemini response could not be parsed as JSON:\n%s", text
+    )
+    raise ValueError(f"Gemini returned invalid JSON. Raw response: {text[:500]}")
 
 
 def _dict_to_guia(data: dict) -> GuiaSADT:
@@ -164,7 +187,7 @@ def _dict_to_guia(data: dict) -> GuiaSADT:
 
 def extract_via_gemini(file_bytes: bytes, content_type: str) -> GuiaSADT:
     genai.configure(api_key=settings.gemini_api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
 
     if content_type == "application/pdf":
         image_bytes = _pdf_first_page_as_image(file_bytes)
@@ -176,9 +199,13 @@ def extract_via_gemini(file_bytes: bytes, content_type: str) -> GuiaSADT:
     image_part = {"mime_type": mime, "data": image_bytes}
 
     response = model.generate_content(
-        [_SYSTEM_PROMPT, image_part],
-        generation_config={"temperature": 0.1, "max_output_tokens": 2048},
-    )
+    [_SYSTEM_PROMPT, image_part],
+    generation_config={
+        "temperature": 0.1,
+        "max_output_tokens": 8192, 
+        "response_mime_type": "application/json",
+    },
+)
 
     data = _parse_gemini_response(response.text)
     return _dict_to_guia(data)

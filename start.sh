@@ -1,25 +1,19 @@
 #!/bin/bash
-set -e
 
-cd "$(dirname "$0")"
+# Muda para o diretório de onde o script está sendo executado
+cd "$(dirname "$0")" || exit
 
-if [ ! -d ".venv" ]; then
-  echo "Criando ambiente virtual..."
-  python3 -m venv .venv
-fi
+echo "Configurando o Poetry para usar a pasta .venv local..."
+poetry config virtualenvs.in-project true
 
-source .venv/bin/activate
+echo "Verificando e instalando dependências com o Poetry..."
+poetry install
 
-echo "Instalando dependências..."
-pip install -q -r requirements.txt
-
+# Verifica se o arquivo .env não existe
 if [ ! -f ".env" ]; then
-  cp .env.example .env
-  echo "Arquivo .env criado a partir de .env.example — adicione sua GEMINI_API_KEY"
+    cp .env.example .env
+    echo "Arquivo .env criado a partir de .env.example -- adicione sua GEMINI_API_KEY"
 fi
 
-HOST=${HOST:-0.0.0.0}
-PORT=${PORT:-8000}
-
-echo "Iniciando servidor em http://$HOST:$PORT"
-uvicorn app.main:app --host "$HOST" --port "$PORT"
+echo "Iniciando servidor em http://localhost:8000"
+poetry run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
