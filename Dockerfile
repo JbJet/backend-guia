@@ -25,6 +25,9 @@ WORKDIR /app
 # Copia apenas os arquivos de dependência primeiro (para otimizar o cache do Docker)
 COPY pyproject.toml poetry.lock* ./
 
+# Regenerate lock file if pyproject.toml has changed
+RUN poetry lock --no-update
+
 # Instala as dependências do projeto (sem o código da aplicação por enquanto)
 RUN poetry install --no-root
 
